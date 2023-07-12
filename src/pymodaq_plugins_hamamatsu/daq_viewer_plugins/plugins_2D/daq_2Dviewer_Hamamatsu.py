@@ -1,5 +1,5 @@
 import numpy as np
-from easydict import EasyDict as edict
+from qtpy.QtCore import QTimer
 from pymodaq.daq_utils.daq_utils import ThreadCommand, getLineInfo, DataFromPlugins, Axis
 from pymodaq.daq_viewer.utility_classes import DAQ_Viewer_base, comon_parameters, main
 from pymodaq.daq_utils.parameter import Parameter
@@ -30,12 +30,13 @@ class DAQ_2DViewer_Hamamatsu(DAQ_Viewer_base):
             [{'title': 'Exposure Time (ms)', 'name': 'exposure_time', 'type': 'int', 'value': 1},
              {'title': 'Compute FPS', 'name': 'fps_on', 'type': 'bool', 'value': True},
              {'title': 'FPS', 'name': 'fps', 'type': 'float', 'value': 0.0, 'readonly': True}]
-         }
+         },
+        {'title': 'Temperature', 'name': 'temperature', 'type': 'float', 'value': 0.0, 'readonly': True},
     ]
     callback_signal = QtCore.Signal()
 
     def ini_attributes(self):
-        self.controller: DCAM = None
+        self.controller: DCAM.DCAMCamera = None
 
         self.x_axis = None
         self.y_axis = None
@@ -47,6 +48,13 @@ class DAQ_2DViewer_Hamamatsu(DAQ_Viewer_base):
 
         # Disable "use ROI" option to avoid confusion with other buttons
         self.settings.child('ROIselect', 'use_ROI').setOpts(visible=False)
+
+        self.timer_temp = QTimer()
+        self.timer_temp.setInterval(1000)
+        self.timer_temp.timeout.connect(self.update_temperature)
+
+    def update_temperature(self):
+        self.settings.child('temperature').setValue(self.controller.get_attribute_value('SENSOR TEMPERATURE'))
 
     def commit_settings(self, param: Parameter):
         """Apply the consequences of a change of value in the detector settings
@@ -132,6 +140,8 @@ class DAQ_2DViewer_Hamamatsu(DAQ_Viewer_base):
         # FPS visibility
         self.settings.child('timing_opts', 'fps').setOpts(visible=self.settings.child('timing_opts', 'fps_on').value())
 
+        self.timer_temp.start()
+
         # Update image parameters
         (*_, hbin, vbin) = self.controller.get_roi()
         height, width = self.controller._get_data_dimensions_rc()
@@ -209,6 +219,7 @@ class DAQ_2DViewer_Hamamatsu(DAQ_Viewer_base):
         kwargs: (dict) of others optionals arguments
         """
         try:
+            self.timer_temp.stop()
             # Warning, acquisition_in_progress returns 1,0 and not a real bool
             if not self.controller.acquisition_in_progress():
                 self.controller.clear_acquisition()
@@ -241,6 +252,7 @@ class DAQ_2DViewer_Hamamatsu(DAQ_Viewer_base):
 
             # To make sure that timed events are executed in continuous grab mode
             QtWidgets.QApplication.processEvents()
+            self.timer_temp.start()
 
         except Exception as e:
             self.emit_status(ThreadCommand('Update_Status', [str(e), 'log']))
@@ -272,6 +284,7 @@ class DAQ_2DViewer_Hamamatsu(DAQ_Viewer_base):
         Terminate the communication protocol
         """
         # Terminate the communication
+        self.timer_temp.stop()
         self.controller.close()
         self.controller = None  # Garbage collect the controller
         self.status.initialized = False
